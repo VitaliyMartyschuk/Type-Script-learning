@@ -374,10 +374,6 @@ class SortableTodoList extends SearchableTodoList implements Sortable {
    }
 }
 
-// ============================================================
-// MOCK — дані з API у snake_case (структура TodoDTO)
-// ============================================================
-
 const mockServerResponse: TodoDTO[] = [
   {
     id: 1,
