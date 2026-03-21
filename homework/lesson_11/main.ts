@@ -1,8 +1,47 @@
-/*
-Вам необхідно написати додаток Todo list. У списку нотаток повинні бути методи для додавання нового запису, видалення, редагування та отримання повної інформації про нотатку за ідентифікатором, а так само отримання списку всіх нотаток. Крім цього, у користувача має бути можливість позначити нотаток, як виконаний, і отримання інформації про те, скільки всього нотаток у списку і скільки залишилося невиконаними. Нотатки не повинні бути порожніми.
-Кожний нотаток має назву, зміст, дату створення і редагування та статус. Нотатки бувають двох типів. Дефолтні та такі, які вимагають підтвердження при ридагуванні.
-Окремо необхідно розширити поведінку списку та додати можливість пошуку нотатка за ім'ям або змістом.
-Також окремо необхідно розширити список можливістю сортування нотаток за статусом або часом створення.
+/* Вам треба створити додаток для управління нотатками, використовуючи принципи ООП, патерн DTO та декоратори.
+
+1. Нотатки
+Кожна нотатка має містити:
+- ідентифікатор
+- назву
+- зміст
+- дату створення
+- дату редагування
+- статус
+- тип
+
+Нотатки бувають двох типів (використовуйте наслідування):
+- Дефолтні.
+- Такі, що вимагають підтвердження при редагуванні та видалинні
+
+2. У списку нотаток повинні бути методи для:
+- Додавання нового запису.
+- Видалення запису за ідентифікатором.
+- Редагування запису.
+- Отримання повної інформації про нотатку за ідентифікатором.
+- Позначення нотатки як "виконаної".
+- Отримання статистики: скільки всього нотаток у списку і скільки залишилося невиконаними.
+- У списку повинна бути можливість пошуку нотатки за ім'ям або змістом.
+- Додайте можливість сортування нотаток за статусом виконання або за часом створення.
+
+3. Робота з даними
+Уявіть, що дані надходять до вашого списку із зовнішнього API. Всі вхідні дані приходять у форматі snake_case.
+Внутрішня бізнес-логіка вашого додатку та класи повинні суворо використовувати camelCase.
+
+Типізуйте механізм, який автоматично трансформує ключі об'єктів зі snake_case у camelCase при отриманні даних, та навпаки — при поверненні результату клієнту.
+
+4. Декоратори
+Для оптимізації та чистоти коду необхідно реалізувати та застосувати наступні декоратори:
+
+@SanitizeInput: Застосовується до методів додавання та редагування. Повинен автоматично видаляти зайві пробіли на початку
+та в кінці строк у назві та змісті нотатки перед тим, як дані потраплять до основної логіки методу.
+
+@ValidateNotEmpty: Застосовується після очищення. Нотатки не повинні бути порожніми. Декоратор перевіряє,
+чи не є назва та зміст порожніми строками, і якщо так — викидає помилку до виконання основної логіки методу.
+
+@AutoUpdateTimestamp: Застосовується до методу редагування. Декоратор повинен перехоплювати виклик методу
+і автоматично оновлювати поле дата редагування поточною датою та часом, звільняючи розробника від необхідності
+писати цю логіку всередині самого методу.
 */
 
 enum TodoStatus {
@@ -41,9 +80,9 @@ interface ITodo {
 }
 
 interface ITodoList {
-    add(title: string, content: string, type: TodoType): ITodo;
+    add(data: TodoDTO): ITodo;  
     delete(id: number): void;
-    edit(id: number, title?: string, content?: string, confirmed?: boolean): void;
+    edit(id: number, data: Partial<TodoDTO>): void; 
     getById(id: number): ITodo | undefined;
     getAllTodos(): ITodo[];
     markAsCompleted(id: number): void;
@@ -58,6 +97,146 @@ interface Searchable {
 interface Sortable {
     sort(options: SortOptions): ITodo[];
 }
+
+type StartsWithUppercase<StringPart extends string> =
+  StringPart extends Uncapitalize<StringPart> ? false : true;
+
+type CamelToSnake<Text extends string> =
+  Text extends `${infer CurrentChar}${infer RestOfString}`
+    ? StartsWithUppercase<RestOfString> extends true
+      ? `${Uncapitalize<CurrentChar>}_${CamelToSnake<RestOfString>}`
+      : `${Uncapitalize<CurrentChar>}${CamelToSnake<RestOfString>}`
+    : Text;
+
+type MapToSnakeCaseDTO<T> = {
+  [K in keyof T as CamelToSnake<K & string>]: T[K];
+};
+
+type SnakeToCamel<T extends string> =
+  T extends `${infer Head}_${infer FirstLetter}${infer Rest}`
+    ? `${Head}${Uppercase<FirstLetter>}${SnakeToCamel<Rest>}`
+    : T;
+
+type MapToCamelCaseDomain<T> = {
+  [K in keyof T as SnakeToCamel<K & string>]: T[K];
+};
+
+type TodoDTO = MapToSnakeCaseDTO<ITodo>;
+
+type ReconstructedTodo = MapToCamelCaseDomain<TodoDTO>;
+
+class TodoMapper {
+  static fromDTO(data: TodoDTO): ITodo {
+    return {
+      id: data.id,
+      title: data.title,
+      content: data.content,
+      status: data.status,
+      type: data.type,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  static toDTO(todo: ITodo): TodoDTO {
+    return {
+      id: todo.id,
+      title: todo.title,
+      content: todo.content,
+      status: todo.status,
+      type: todo.type,
+      created_at: todo.createdAt,
+      updated_at: todo.updatedAt,
+    };
+  }
+}
+
+type Method <T, A extends any[], R> = (this: T, ...args: A) => R;
+
+function SanitizeInput<This, Args extends any[], Return>(
+    originalMethod: Method<This, Args, Return>,
+    context: ClassMethodDecoratorContext<This, Method<This, Args, Return>>
+): Method<This, Args, Return> {
+    if (context.kind !== 'method') {
+        throw new Error('SanitizeInput can only be applied to methods');
+    }
+
+    const methodName = context.name;
+    if (methodName !== 'add' && methodName !== 'edit') {
+        throw new Error('SanitizeInput can only be applied to add and edit methods');
+    }
+
+    return function (this: This, ...args: Args): Return {
+        const sanitized = args.map(arg => {
+            if (arg && typeof arg === 'object') {
+                const dto = arg as Record<string, unknown>;
+                return {
+                    ...dto,
+                    ...(typeof dto.title === 'string' && { title: dto.title.trim() }),
+                    ...(typeof dto.content === 'string' && { content: dto.content.trim() }),
+                };
+            }
+            return arg;
+        });
+        return originalMethod.apply(this, sanitized as unknown as Args);
+    };
+}
+
+function ValidateNotEmpty<This, Args extends any[], Return>(
+    originalMethod: Method<This, Args, Return>,
+    context: ClassMethodDecoratorContext<This, Method<This, Args, Return>>
+): Method<This, Args, Return> {
+    if (context.kind !== 'method') {
+        throw new Error('SanitizeInput can only be applied to methods');
+    }
+
+    const methodName = context.name;
+
+    if (methodName !== 'add' && methodName !== 'edit') {
+        throw new Error('SanitizeInput can only be applied to add and edit methods');
+    }
+
+    return function (this: This, ...args: Args): Return {
+        for (const arg of args) {
+            if (arg && typeof arg === 'object') {
+                const dto = arg as Record<string, unknown>;
+                if (typeof dto.title === 'string' && dto.title.trim() === '') {
+                    throw new Error('Title cannot be empty');
+                }
+                if (typeof dto.content === 'string' && dto.content.trim() === '') {
+                    throw new Error('Content cannot be empty');
+                }
+            }
+        }
+        return originalMethod.apply(this, args);
+    };
+}
+
+function AutoUpdateTimestamp<This, Args extends any[], Return>(
+    originalMethod: Method<This, Args, Return>,
+    context: ClassMethodDecoratorContext<This, Method<This, Args, Return>>
+): Method<This, Args, Return> {
+    if (context.kind !== 'method') {
+        throw new Error('SanitizeInput can only be applied to methods');
+    }
+
+    const methodName = context.name;
+
+    if (methodName !== 'edit') {
+        throw new Error('AutoUpdateTimestamp can only be applied to edit method');
+    }
+
+    return function (this: This, ...args: Args): Return {
+        const result = originalMethod.apply(this, args);
+        const id = args[0] as unknown as number;
+        const todo = (this as any).getById(id) as ITodo;
+        if (todo) {
+            todo.updatedAt = new Date();
+        }
+        return result;
+    };
+}
+
 
 class Todo implements ITodo {
     private static idCounter = 0;
@@ -86,19 +265,39 @@ class Todo implements ITodo {
 class TodoList implements ITodoList {
     private todos: ITodo[] = [];
     
-    add(title: string, content: string, type: TodoType): ITodo {
-        const newTodo = type === TodoType.Confirmable
-            ? new ConfirmableTodo(title, content, type)
-            : new Todo(title, content, type);
+    addFromDTO(data: TodoDTO): ITodo {
+        return this.add(data);
+    }
+
+    getAllAsDTO(): TodoDTO[] {
+        return this.todos.map(todo => TodoMapper.toDTO(todo));
+    }
+
+    getByIdAsDTO(id: number): TodoDTO | undefined {
+        const todo = this.getById(id);
+        return todo ? TodoMapper.toDTO(todo) : undefined;
+    }
+
+    @SanitizeInput
+    @ValidateNotEmpty
+    add(data: TodoDTO): ITodo {
+        const mapped = TodoMapper.fromDTO(data);
+        const newTodo = mapped.type === TodoType.Confirmable
+            ? new ConfirmableTodo(mapped.title, mapped.content, mapped.type)
+            : new Todo(mapped.title, mapped.content, mapped.type);
         this.todos.push(newTodo);
         return newTodo;
     }
+
 
     delete(id: number): void {
         this.todos = this.todos.filter(todo => todo.id !== id);
     }
 
-    edit(id: number, title?: string, content?: string, confirmed?: boolean): void {
+    @SanitizeInput
+    @ValidateNotEmpty
+    @AutoUpdateTimestamp
+    edit(id: number, data: Partial<TodoDTO>): void {
         const todo = this.getById(id);
         if (!todo) return;
 
@@ -106,9 +305,8 @@ class TodoList implements ITodoList {
             throw new Error('Editing requires confirmation');
         }
 
-        if (title) todo.title = title;
-        if (content) todo.content = content;
-        todo.updatedAt = new Date();
+        if (data.title) todo.title = data.title;
+        if (data.content) todo.content = data.content;
     }
 
     getById(id: number): ITodo | undefined {
@@ -176,57 +374,135 @@ class SortableTodoList extends SearchableTodoList implements Sortable {
    }
 }
 
-// --- TEST CASES ---
+// ============================================================
+// MOCK — дані з API у snake_case (структура TodoDTO)
+// ============================================================
+
+const mockServerResponse: TodoDTO[] = [
+  {
+    id: 1,
+    title: 'Прочитати: Великий Гетсбі (Ф. Скотт Фіцджеральд)',
+    content: 'Проаналізувати мотив «зеленого вогника» та крах американської мрії.',
+    status: TodoStatus.Completed,
+    type: TodoType.Default,
+    created_at: new Date('2026-02-01T10:00:00Z'),
+    updated_at: new Date('2026-02-02T15:30:00Z'),
+  },
+  {
+    id: 2,
+    title: 'Купити: На Західному фронті без змін (Е.М. Ремарк)',
+    content: 'Звернути увагу на контраст між мирним життям та жахами окопів.',
+    status: TodoStatus.Pending,
+    type: TodoType.Confirmable,
+    created_at: new Date('2026-02-05T09:15:00Z'),
+    updated_at: new Date('2026-02-05T09:15:00Z'),
+  },
+  {
+    id: 3,
+    title: 'Написати есе: Фієста (Е. Хемінґвей)',
+    content: 'Розібрати «принцип айсберга» Хемінґвея.',
+    status: TodoStatus.Pending,
+    type: TodoType.Default,
+    created_at: new Date('2026-02-10T14:20:00Z'),
+    updated_at: new Date('2026-02-12T11:00:00Z'),
+  },
+];
+
+// ============================================================
+// TEST CASES
+// ============================================================
+
 const todoList = new SortableTodoList();
 
-const todo1 = todoList.add('Buy goods', 'Milk, eggs, bread', TodoType.Default);
-const todo2 = todoList.add('Read a book', 'Read chapter 5', TodoType.Default);
-const todo3 = todoList.add('Fix bug', 'Fix the login issue in auth module', TodoType.Confirmable);
+// --- Завантаження з API через add(TodoDTO) ---
+console.log('=== Завантаження нотаток з API ===');
+const loaded = mockServerResponse.map(dto => todoList.add(dto));
+console.log('Завантажено:', todoList.getTotal(), 'нотаток');
 
-console.log(' All todos');
-console.log(todoList.getAllTodos());
+// --- Статистика ---
+console.log('\n=== Статистика ===');
+console.log('Всього:', todoList.getTotal());
+console.log('Невиконаних:', todoList.getPendingTodosCount());
 
-console.log('\n Total / Pending ');
-console.log('Total:', todoList.getTotal());
-console.log('Pending:', todoList.getPendingTodosCount());
+// --- getAllAsDTO — повернути клієнту у snake_case ---
+console.log('\n=== Всі нотатки у форматі DTO (snake_case) ===');
+console.log(todoList.getAllAsDTO());
 
-todoList.markAsCompleted(todo1.id);
-console.log('\ After markAsCompleted (todo1)');
-console.log('Pending:', todoList.getPendingTodosCount());
+// --- getByIdAsDTO ---
+console.log('\n=== Отримати нотатку за id у форматі DTO ===');
+console.log(todoList.getByIdAsDTO(loaded[0].id));
 
-todoList.edit(todo2.id, 'Read a book (updated)');
-console.log('\n After edit todo2');
-console.log(todoList.getById(todo2.id));
+// --- markAsCompleted ---
+console.log('\n=== Позначити як виконану (Хемінґвей) ===');
+todoList.markAsCompleted(loaded[2].id);
+console.log('Невиконаних після позначення:', todoList.getPendingTodosCount());
 
-console.log('\n Edit ConfirmableTodo without confirmation');
+// --- Редагування звичайної нотатки через Partial<TodoDTO> ---
+console.log('\n=== Редагування нотатки (Хемінґвей) ===');
+todoList.edit(loaded[2].id, { title: 'Написати есе: Фієста (оновлено)' });
+console.log(todoList.getById(loaded[2].id));
+
+// --- Редагування ConfirmableTodo без підтвердження ---
+console.log('\n=== Редагування ConfirmableTodo без підтвердження ===');
 try {
-    todoList.edit(todo3.id, 'Fix bug (updated)');
+    todoList.edit(loaded[1].id, { title: 'Оновлена назва' });
 } catch (e) {
-    console.log('Error:', (e as Error).message);
+    console.log('Помилка:', (e as Error).message);
 }
 
-(todo3 as ConfirmableTodo).confirm();
-todoList.edit(todo3.id, 'Fix bug (confirmed update)');
-console.log('\n After confirmed edit todo3');
-console.log(todoList.getById(todo3.id));
+// --- Редагування ConfirmableTodo з підтвердженням ---
+console.log('\n=== Редагування ConfirmableTodo з підтвердженням ===');
+(loaded[1] as ConfirmableTodo).confirm();
+todoList.edit(loaded[1].id, { title: 'Купити: На Західному фронті (підтверджено)' });
+console.log(todoList.getById(loaded[1].id));
 
-console.log('\n Search "book"');
-console.log(todoList.search('book'));
+// --- @SanitizeInput — пробіли обрізаються ---
+console.log('\n=== @SanitizeInput — trim пробілів ===');
+const trimmed = todoList.add({
+    id: 4,
+    title: '   Нова нотатка   ',
+    content: '   Зміст нотатки   ',
+    status: TodoStatus.Pending,
+    type: TodoType.Default,
+    created_at: new Date(),
+    updated_at: new Date(),
+});
+console.log('title:', `"${trimmed.title}"`);
+console.log('content:', `"${trimmed.content}"`);
 
-console.log('\n Sort by status ASC');
+// --- @ValidateNotEmpty — порожня назва ---
+console.log('\n=== @ValidateNotEmpty — порожня назва ===');
+try {
+    todoList.add({
+        id: 5,
+        title: '   ',
+        content: 'Якийсь зміст',
+        status: TodoStatus.Pending,
+        type: TodoType.Default,
+        created_at: new Date(),
+        updated_at: new Date(),
+    });
+} catch (e) {
+    console.log('Помилка:', (e as Error).message);
+}
+
+// --- Пошук ---
+console.log('\n=== Пошук "фронт" ===');
+console.log(todoList.search('фронт'));
+
+console.log('\n=== Пошук "айсберг" (по змісту) ===');
+console.log(todoList.search('айсберг'));
+
+// --- Сортування за статусом ---
+console.log('\n=== Сортування за статусом ASC ===');
 console.log(todoList.sort({ field: SortField.Status, order: SortOrder.Asc }));
 
-console.log('\n Sort by createdAt DESC');
+// --- Сортування за датою створення ---
+console.log('\n=== Сортування за датою створення DESC ===');
 console.log(todoList.sort({ field: SortField.CreatedAt, order: SortOrder.Desc }));
 
-todoList.delete(todo1.id);
-console.log('\n After delete todo1');
-console.log('Total:', todoList.getTotal());
+// --- Видалення ---
+console.log('\n=== Видалення нотатки (Гетсбі) ===');
+todoList.delete(loaded[0].id);
+console.log('Всього після видалення:', todoList.getTotal());
 console.log(todoList.getAllTodos());
-
-console.log('\n Empty todo validation');
-try {
-    todoList.add('', 'some content', TodoType.Default);
-} catch (e) {
-    console.log('Error:', (e as Error).message);
-}
